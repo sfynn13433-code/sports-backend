@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -83,8 +84,19 @@ app.post("/predict", async (req, res, next) => {
 
     // Get expert inputs
     const expertData = await fetchExpertData(homeTeam, awayTeam, league);
+
     // Blend using your logic
     const adjusted = adjustProbabilities(aiBase, expertData);
+
+    // 🔑 API-SPORTS stub (replace fixture ID with real one later)
+    // Uncomment when ready to go live:
+    /*
+    const apiResponse = await axios.get("https://v3.football.api-sports.io/predictions", {
+      headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+      params: { fixture: 12345 } // Replace with real fixture ID
+    });
+    const apiData = apiResponse.data.response[0];
+    */
 
     // Core prediction response
     const prediction = {
@@ -110,8 +122,7 @@ app.post("/predict", async (req, res, next) => {
           market: "Both Teams to Score",
           probability: adjusted.btts,
           confidence: suggest(adjusted.btts),
-          rationale:
-            `${homeTeam}'s home goal tendency aligns with ${awayTeam}'s attacking form.`,
+          rationale: `${homeTeam}'s home goal tendency aligns with ${awayTeam}'s attacking form.`,
         }
       ],
       expert_notes: expertData.expert_notes || [],
@@ -141,4 +152,3 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
