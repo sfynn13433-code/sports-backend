@@ -88,45 +88,78 @@ app.post("/predict", async (req, res, next) => {
     // Blend using your logic
     const adjusted = adjustProbabilities(aiBase, expertData);
 
-    // 🔑 API-SPORTS stub (replace fixture ID with real one later)
-    // Uncomment when ready to go live:
-    /*
-    const apiResponse = await axios.get("https://v3.football.api-sports.io/predictions", {
-      headers: { "x-apisports-key": process.env.APISPORTS_KEY },
-      params: { fixture: 12345 } // Replace with real fixture ID
-    });
-    const apiData = apiResponse.data.response[0];
-    */
+    // 🔑 Step 1: Get fixture ID from API-SPORTS
+    let fixtureId = null;
+    try {
+      const fixtureResponse = await axios.get("https://v3.football.api-sports.io/fixtures", {
+        headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+        params: {
+          league: 39,       // Premier League
+          season: 2025,     // Current season
+          team: homeTeam    // Filter by home team
+        }
+      });
+
+      const fixture = fixtureResponse.data.response.find(
+        f => f.teams.home.name.toLowerCase() === homeTeam.toLowerCase() &&
+             f.teams.away.name.toLowerCase() === awayTeam.toLowerCase()
+      );
+
+      if (fixture) {
+        fixtureId = fixture.fixture.id;
+      }
+    } catch (apiErr) {
+      console.error("Fixture lookup failed:", apiErr.message);
+    }
+
+    let apiData = null;
+    if (fixtureId) {
+      try {
+        const apiResponse = await axios.get("https://v3.football.api-sports.io/predictions", {
+          headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+          params: { fixture: fixtureId }
+        });
+        apiData = apiResponse.data.response[0];
+      } catch (apiErr) {
+        console.error("Prediction fetch failed:", apiErr.message);
+      }
+    }
 
     // Core prediction response
     const prediction = {
       match: `${homeTeam} vs ${awayTeam} (${league})`,
-      source: "Blended AI model + expert consensus",
-      methodology:
-        "Probabilities blended from AI baselines and expert tempo/game‑state assessments. Not live yet — replace stubs with real APIs to go live.",
+      source: apiData ? "Blended AI model + expert consensus + API-SPORTS" : "Blended AI model + expert consensus",
+      methodology: apiData
+        ? "Probabilities blended from AI baselines, expert tempo/game-state assessments, and API-Sports live data."
+        : "Probabilities blended from AI baselines and expert tempo/game-state assessments. Not live yet — replace stubs with real APIs to go live.",
       predictions: [
         {
           market: "Full Time Result",
-          probability: adjusted.awayWin,
+          probability: apiData?.predictions?.percent?.win_home || adjusted.awayWin,
           confidence: suggest(adjusted.awayWin),
-          rationale: `${awayTeam} are favorites based on recent form and scoring pace.`,
+          rationale: apiData
+            ? "API-Sports model indicates likelihood of home win."
+            : `${awayTeam} are favorites based on recent form and scoring pace.`,
         },
         {
           market: "Over 2.5 Goals",
-          probability: adjusted.over25,
+          probability: apiData?.predictions?.goals?.over_25 || adjusted.over25,
           confidence: suggest(adjusted.over25),
-          rationale:
-            "Both teams feature in high-scoring contests, so Over 2.5 is strongly probable.",
+          rationale: apiData
+            ? "API-Sports goal model suggests Over 2.5 is probable."
+            : "Both teams feature in high-scoring contests, so Over 2.5 is strongly probable.",
         },
         {
           market: "Both Teams to Score",
-          probability: adjusted.btts,
+          probability: apiData?.predictions?.percent?.btts || adjusted.btts,
           confidence: suggest(adjusted.btts),
-          rationale: `${homeTeam}'s home goal tendency aligns with ${awayTeam}'s attacking form.`,
+          rationale: apiData
+            ? "API-Sports BTTS model suggests both teams likely to score."
+            : `${homeTeam}'s home goal tendency aligns with ${awayTeam}'s attacking form.`,
         }
       ],
       expert_notes: expertData.expert_notes || [],
-      suggested_scoreline: "Chelsea 2–1 Burnley",
+      suggested_scoreline: apiData?.predictions?.advice || "Chelsea 2–1 Burnley",
       odds: {
         homeWin: makeOdds(adjusted.homeWin),
         draw: makeOdds(adjusted.draw),
