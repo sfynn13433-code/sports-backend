@@ -4,34 +4,36 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-/* ------------------------------ Middleware ------------------------------ */
+// Middleware for CORS and JSON parsing
 app.use(cors());
 app.use(express.json());
 
-/* ------------------------------ Health check root route ------------------------------ */
+// Health check root route
 app.get("/", (req, res) => {
   res.send("SKCS Sports Predictions backend is running.");
 });
 
-/* ------------------------------ Expert data stub (replace later with real APIs) ------------------------------ */
+// Stub expert data function (replace with live integration later)
 async function fetchExpertData(home, away, league) {
+  // Example expert data for Burnley vs Chelsea
   return {
-    expert_win: 36,
-    expert_draw: 29,
-    expert_away: 35,
-    expert_btts: 66,
-    expert_over25: 59,
-    expert_first_half_goals: 52,
-    expert_corners_high: 45,
+    expert_win: 61,
+    expert_draw: 20,
+    expert_away: 19,
+    expert_btts: 61,
+    expert_over25: 62,
+    expert_first_half_goals: 54,
+    expert_corners_high: 43,
     expert_cards_high: 58,
     expert_notes: [
-      "Pressing intensity suggests open transitions.",
-      "Set‑piece threat elevates corner totals.",
-      "Midfield duels increase booking risk.",
+      "Chelsea are away favorites with high scoring stats.",
+      "Burnley tends to score at home, supporting BTTS.",
+      "Likely scoreline: Chelsea 2–1 Burnley."
     ],
   };
 }
-/* ------------------------------ Blending logic (AI base + expert consensus) ------------------------------ */
+
+// Blending logic (AI base + expert consensus)
 function adjustProbabilities(defaults, experts) {
   const weightModel = 0.6;
   const weightExpert = 0.4;
@@ -47,145 +49,18 @@ function adjustProbabilities(defaults, experts) {
     cardsHigh: blend(defaults.cardsHigh, experts.expert_cards_high),
   };
 }
-/* ------------------------------ Utilities ------------------------------ */
+
+// Utilities
 const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
 const pct = (n) => `${clampPct(n)}%`;
 const suggest = (p) => (p >= 70 ? "High" : p >= 50 ? "Medium" : "Low");
-const note = (text) => text;
-
-function makeOdds(probPercent) {
+const makeOdds = (probPercent) => {
   const p = Math.max(1, Math.min(99, probPercent)) / 100;
   const dec = Math.max(1.1, Math.min(10.0, 1 / p));
   return dec.toFixed(2);
-}
+};
 
-/* ------------------------------ Derive market lines from anchors ------------------------------ */
-function deriveTotals(adjusted) {
-  const over25 = adjusted.over25;
-  const mapping = {
-    0.5: Math.max(70, over25 + 12),
-    1.5: Math.max(62, over25 + 4),
-    2.5: over25,
-    3.5: Math.max(32, over25 - 26),
-    4.5: Math.max(22, over25 - 36),
-    5.5: Math.max(14, over25 - 44),
-  };
-  const over = mapping;
-  const under = Object.fromEntries(
-    Object.entries(over).map(([k, v]) => [k, Math.max(0, 100 - v)])
-  );
-  return { over, under };
-}
-function deriveFirstHalf(adjusted) {
-  const fh = adjusted.firstHalfGoals;
-  const over = {
-    0.5: Math.max(58, fh + 6),
-    1.5: Math.max(46, fh - 6),
-  };
-  const under = {
-    0.5: Math.max(0, 100 - over[0.5]),
-    1.5: Math.max(0, 100 - over[1.5]),
-  };
-  const home = Math.round(adjusted.homeWin * 0.9);
-  const draw = Math.round(adjusted.draw * 1.2);
-  const away = Math.round(adjusted.awayWin * 0.9);
-  return { over, under, fh1x2: { home, draw, away } };
-}
-function deriveFulltime(adjusted) {
-  const oneX2 = {
-    home: adjusted.homeWin,
-    draw: adjusted.draw,
-    away: adjusted.awayWin,
-  };
-  const dc = {
-    "1X": Math.max(0, Math.min(100, oneX2.home + oneX2.draw)),
-    "X2": Math.max(0, Math.min(100, oneX2.draw + oneX2.away)),
-    "12": Math.max(0, Math.min(100, oneX2.home + oneX2.away)),
-  };
-  return { oneX2, dc };
-}
-function composeDoubleChanceCombos(dc, totals, btts) {
-  const lines = [1.5, 2.5, 3.5, 4.5, 5.5];
-  const combos = [];
-  for (const key of ["1X", "X2", "12"]) {
-    for (const l of lines) {
-      const pOver = Math.round(dc[key] * 0.5 + totals.over[l] * 0.5);
-      const pUnder = Math.round(dc[key] * 0.5 + totals.under[l] * 0.5);
-      combos.push({
-        outcome: `Double Chance ${key} + Over ${l}`,
-        probability: pct(pOver),
-        odds: makeOdds(pOver),
-        market: "double chance + goals",
-        suggestion: suggest(pOver),
-        rationale: note(`Combined stability from ${key} with scoring pace over ${l}.`),
-      });
-      combos.push({
-        outcome: `Double Chance ${key} + Under ${l}`,
-        probability: pct(pUnder),
-        odds: makeOdds(pUnder),
-        market: "double chance + goals",
-        suggestion: suggest(pUnder),
-        rationale: note(`Protection via ${key} with conservative totals under ${l}.`),
-      });
-    }
-  }
-  const pYes = Math.round(btts * 0.6 + 60 * 0.4);
-  const pNo = Math.max(0, 100 - pYes);
-  for (const key of ["1X", "X2", "12"]) {
-    const pComboYes = Math.round(dc[key] * 0.5 + pYes * 0.5);
-    const pComboNo = Math.round(dc[key] * 0.5 + pNo * 0.5);
-    combos.push({
-      outcome: `Double Chance ${key} + BTTS Yes`,
-      probability: pct(pComboYes),
-      odds: makeOdds(pComboYes),
-      market: "double chance + BTTS",
-      suggestion: suggest(pComboYes),
-      rationale: note(`Balanced exposure via ${key} with mutual scoring likelihood.`),
-    });
-    combos.push({
-      outcome: `Double Chance ${key} + BTTS No`,
-      probability: pct(pComboNo),
-      odds: makeOdds(pComboNo),
-      market: "double chance + BTTS",
-      suggestion: suggest(pComboNo),
-      rationale: note(`Conservative approach: ${key} cover with single‑sided control expected.`),
-    });
-  }
-  const over25 = totals.over[2.5];
-  const under25 = totals.under[2.5];
-  const bttsOver25 = Math.round(btts * 0.55 + over25 * 0.45);
-  const bttsUnder25 = Math.round(btts * 0.45 + under25 * 0.55);
-  const noTeamScore = Math.round(Math.max(0, 100 - btts) * 0.8 + under25 * 0.2);
-
-  combos.push({
-    outcome: "BTTS Yes + Over 2.5",
-    probability: pct(bttsOver25),
-    odds: makeOdds(bttsOver25),
-    market: "BTTS + goals",
-    suggestion: suggest(bttsOver25),
-    rationale: note("Mutual scoring with elevated total pace beyond 2.5."),
-  });
-  combos.push({
-    outcome: "BTTS Yes + Under 2.5",
-    probability: pct(bttsUnder25),
-    odds: makeOdds(bttsUnder25),
-    market: "BTTS + goals",
-    suggestion: suggest(bttsUnder25),
-    rationale: note("Rare scenario where both score yet totals cap below three."),
-  });
-  combos.push({
-    outcome: "No Team To Score",
-    probability: pct(noTeamScore),
-    odds: makeOdds(noTeamScore),
-    market: "specials",
-    suggestion: suggest(noTeamScore),
-    rationale: note("Requires suppressed creation and finishing; lower likelihood."),
-  });
-
-  return combos;
-}
-
-/* ------------------------------ Predict route — full outputs ------------------------------ */
+// Predict route — full response for frontend
 app.post("/predict", async (req, res, next) => {
   try {
     const { homeTeam, awayTeam, league } = req.body;
@@ -194,26 +69,24 @@ app.post("/predict", async (req, res, next) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Baseline AI anchors (replace with your model outputs when ready)
+    // Example: AI base probabilities (replace with ML model data if available)
     const aiBase = {
-      homeWin: 31,
-      draw: 29,
-      awayWin: 40,
-      btts: 65,
-      over25: 58,
-      firstHalfGoals: 50,
-      cornersHigh: 42,
-      cardsHigh: 58,
+      homeWin: 20,
+      draw: 19,
+      awayWin: 61,
+      btts: 59,
+      over25: 60,
+      firstHalfGoals: 53,
+      cornersHigh: 40,
+      cardsHigh: 56,
     };
 
+    // Get expert inputs
     const expertData = await fetchExpertData(homeTeam, awayTeam, league);
+    // Blend using your logic
     const adjusted = adjustProbabilities(aiBase, expertData);
-    const totals = deriveTotals(adjusted);
-    const firstHalf = deriveFirstHalf(adjusted);
-    const fulltime = deriveFulltime(adjusted);
-    const combos = composeDoubleChanceCombos(fulltime.dc, totals, adjusted.btts);
 
-    // Compose your rich prediction object here, just as in your long code block
+    // Core prediction response
     const prediction = {
       match: `${homeTeam} vs ${awayTeam} (${league})`,
       source: "Blended AI model + expert consensus",
@@ -222,26 +95,34 @@ app.post("/predict", async (req, res, next) => {
       predictions: [
         {
           market: "Full Time Result",
-          probability: adjusted.homeWin,
-          confidence: suggest(adjusted.homeWin),
-          rationale: `${homeTeam}'s home strength vs ${awayTeam}'s away volatility`
+          probability: adjusted.awayWin,
+          confidence: suggest(adjusted.awayWin),
+          rationale: `${awayTeam} are favorites based on recent form and scoring pace.`,
         },
         {
           market: "Over 2.5 Goals",
           probability: adjusted.over25,
           confidence: suggest(adjusted.over25),
-          rationale: "Both teams average over 2 goals per game"
+          rationale:
+            "Both teams feature in high-scoring contests, so Over 2.5 is strongly probable.",
         },
         {
           market: "Both Teams to Score",
           probability: adjusted.btts,
           confidence: suggest(adjusted.btts),
-          rationale: `${homeTeam} and ${awayTeam} have consistent attacking metrics.`
+          rationale:
+            `${homeTeam}'s home goal tendency aligns with ${awayTeam}'s attacking form.`,
         }
       ],
-      combos,
       expert_notes: expertData.expert_notes || [],
-      // ...add more fields as in your long block if needed
+      suggested_scoreline: "Chelsea 2–1 Burnley",
+      odds: {
+        homeWin: makeOdds(adjusted.homeWin),
+        draw: makeOdds(adjusted.draw),
+        awayWin: makeOdds(adjusted.awayWin),
+        over25: makeOdds(adjusted.over25),
+        btts: makeOdds(adjusted.btts)
+      }
     };
 
     res.json(prediction);
@@ -250,15 +131,13 @@ app.post("/predict", async (req, res, next) => {
   }
 });
 
-/* ------------------------------ Global error handler ------------------------------ */
+// Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  const status = err.status || 500;
-  const message = err.message || "Internal Server Error";
-  res.status(status).json({ success: false, error: message });
+  res.status(err.status || 500).json({ success: false, error: err.message || "Internal Server Error" });
 });
 
-/* ------------------------------ Start server ------------------------------ */
+// Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
