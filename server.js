@@ -1,16 +1,56 @@
-const express = require("express");
-const cors = require("cors");
-const axios = require("axios");
+import express, { Request, Response, NextFunction } from "express";
+import cors from "cors";
+import axios from "axios";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
 app.use(cors());
 app.use(express.json());
 
-// Helper to blend probabilities
-function blendProbabilities(sources) {
-  const avg = key => sources.reduce((sum, s) => sum + s[key], 0) / sources.length;
+interface MarketOption {
+  label: string;
+  probability: number;
+  confidence: "Low" | "Medium" | "High";
+}
+
+interface Market {
+  heading: string;
+  options: MarketOption[];
+}
+
+interface PredictionSource {
+  source: string;
+  win: number;
+  draw: number;
+  lose: number;
+  rationale: string;
+}
+
+interface FixtureData {
+  fixture: {
+    id: number;
+    date: string;
+    teams: {
+      home: { name: string };
+      away: { name: string };
+    };
+  };
+  venue?: {
+    name: string;
+  };
+  statistics?: any[];
+  events?: any[];
+  odds?: any;
+  lineups?: any[];
+}
+
+function blendProbabilities(sources: PredictionSource[]) {
+  const avg = (key: keyof PredictionSource) =>
+    sources.reduce((sum, s) => sum + s[key], 0) / sources.length;
+
   const rationale = sources.map(s => `[${s.source}] ${s.rationale}`).join(" | ");
+
   return {
     probabilities: {
       win: Number((avg("win") * 100).toFixed(1)),
@@ -22,10 +62,10 @@ function blendProbabilities(sources) {
   };
 }
 
-const confidence = p => (p >= 70 ? "High" : p >= 50 ? "Medium" : "Low");
+const confidence = (p: number) => (p >= 70 ? "High" : p >= 50 ? "Medium" : "Low");
 
-const makeOversUnders = (baseValues, prefix) => {
-  const opts = [];
+const makeOversUnders = (baseValues: number[], prefix: string): MarketOption[] => {
+  const opts: MarketOption[] = [];
   baseValues.forEach(v => {
     opts.push({ label: `${prefix} Over ${v}`, probability: 50, confidence: "Medium" });
     opts.push({ label: `${prefix} Under ${v}`, probability: 50, confidence: "Medium" });
@@ -33,64 +73,67 @@ const makeOversUnders = (baseValues, prefix) => {
   return opts;
 };
 
-// Fetch extended fixture details including venue, stats, events, odds, lineups
-async function getFixtureDetails(fixtureId) {
+async function getFixtureDetails(fixtureId: number): Promise<FixtureData> {
   const response = await axios.get(
-    `https://v3.football.api-sports.io/fixtures`,
+    "https://v3.football.api-sports.io/fixtures",
     {
-      headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+      headers: { "x-apisports-key": process.env.APISPORTS_KEY || "" },
       params: { id: fixtureId, include: "venue,statistics,events,odds,lineups" }
     }
   );
   return response.data.response[0];
 }
 
-app.get("/", (req, res) => {
+app.get("/", (_req: Request, res: Response) => {
   res.send("SKCS Sports Predictions backend is running.");
 });
 
-app.post("/predict", async (req, res, next) => {
+app.post("/predict", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { homeTeam, awayTeam, league } = req.body;
-    const displayLeague = (league || "").trim();
-    const showLeague = displayLeague.toLowerCase() === "premier league" ? "Premier League" : displayLeague;
 
-    // AI and expert predictions
-    const aiPrediction = {
+    const aiPrediction: PredictionSource = {
       source: "AI",
-      win: 0.21, draw: 0.19, lose: 0.60,
+      win: 0.21,
+      draw: 0.19,
+      lose: 0.60,
       rationale: "AI: Model merges form, xG, and squad depth."
     };
-    const expertPrediction = {
+    const expertPrediction: PredictionSource = {
       source: "Expert",
-      win: 0.22, draw: 0.18, lose: 0.60,
+      win: 0.22,
+      draw: 0.18,
+      lose: 0.60,
       rationale: `Expert: Consensus tips ${awayTeam} for pressing and goals against ${homeTeam}.`
     };
 
-    // Get fixture ID from API-Sports
-    let apiOddsSource = null, apiData = null, fixtureId = null, fixtureData = null;
+    let apiOddsSource: PredictionSource | null = null;
+    let apiData: any = null;
+    let fixtureId: number | null = null;
+    let fixtureData: FixtureData | null = null;
+
     try {
       const fixtureResp = await axios.get(
         "https://v3.football.api-sports.io/fixtures",
         {
-          headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+          headers: { "x-apisports-key": process.env.APISPORTS_KEY || "" },
           params: { league: 39, season: 2025, team: homeTeam }
         }
       );
 
       const fixture = fixtureResp.data.response.find(
-        f => f.teams.home.name.toLowerCase() === homeTeam.toLowerCase() &&
-             f.teams.away.name.toLowerCase() === awayTeam.toLowerCase()
+        (f: any) =>
+          f.teams.home.name.toLowerCase() === homeTeam.toLowerCase() &&
+          f.teams.away.name.toLowerCase() === awayTeam.toLowerCase()
       );
 
       if (fixture) fixtureId = fixture.fixture.id;
 
       if (fixtureId) {
-        // Fetch predictions odds and fixture details
         const apiResp = await axios.get(
           "https://v3.football.api-sports.io/predictions",
           {
-            headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+            headers: { "x-apisports-key": process.env.APISPORTS_KEY || "" },
             params: { fixture: fixtureId }
           }
         );
@@ -110,12 +153,12 @@ app.post("/predict", async (req, res, next) => {
       console.error("API-Sports error:", error.message);
     }
 
-    const sources = [aiPrediction, expertPrediction];
+    const sources: PredictionSource[] = [aiPrediction, expertPrediction];
     if (apiOddsSource) sources.push(apiOddsSource);
 
     const consensus = blendProbabilities(sources);
 
-    const markets = [
+    const markets: Market[] = [
       {
         heading: "✅ 1. 1X2 (Match Result)",
         options: [
@@ -124,35 +167,34 @@ app.post("/predict", async (req, res, next) => {
           { label: `2 = ${awayTeam}`, probability: consensus.probabilities.lose, confidence: confidence(consensus.probabilities.lose) },
         ],
       },
-      // More markets with properly generated over/under for Corners and Cards as before...
       {
         heading: "✅ 8. Corners",
         options: [
-          ...makeOversUnders([6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5], "Total Corners"),
+          ...makeOversUnders([6.5,7.5,8.5,9.5,10.5,11.5,12.5], "Total Corners"),
           { label: `Home Corners (${homeTeam})`, probability: 55, confidence: "Medium" },
           { label: `Away Corners (${awayTeam})`, probability: 45, confidence: "Low" },
-          ...makeOversUnders([3.5, 4.5, 5.5, 6.5], "Halftime Corners"),
-        ],
+          ...makeOversUnders([3.5,4.5,5.5,6.5], "Halftime Corners"),
+        ]
       },
       {
         heading: "✅ 9. Cards / Bookings",
         options: [
-          ...makeOversUnders([0.5, 1.5, 2.5, 3.5, 4.5, 6.5, 7.5], "Over Cards"),
-          ...makeOversUnders([0.5, 1.5, 2.5, 3.5, 4.5], "Halftime Cards"),
+          ...makeOversUnders([0.5,1.5,2.5,3.5,4.5,6.5,7.5], "Over Cards"),
+          ...makeOversUnders([0.5,1.5,2.5,3.5,4.5], "Halftime Cards"),
           { label: "Player to get booked", probability: 30, confidence: "Low" },
-        ],
+        ]
       },
-      // Other markets as you have defined...
+      // Add other markets as needed
     ];
 
     res.json({
-      match: fixtureData ? fixtureData.fixture?.teams.home.name + " vs " + fixtureData.fixture?.teams.away.name : `${homeTeam} vs ${awayTeam}`,
-      kickoff: fixtureData?.fixture?.date,
-      venue: fixtureData?.venue?.name,
-      stats: fixtureData?.statistics,
-      events: fixtureData?.events,
-      odds: fixtureData?.odds || apiData?.predictions,
-      lineups: fixtureData?.lineups,
+      match: fixtureData ? fixtureData.fixture.teams.home.name + " vs " + fixtureData.fixture.teams.away.name : `${homeTeam} vs ${awayTeam}`,
+      kickoff: fixtureData?.fixture.date,
+      venue: fixtureData?.venue?.name || "",
+      stats: fixtureData?.statistics || [],
+      events: fixtureData?.events || [],
+      odds: fixtureData?.odds || apiData?.predictions || {},
+      lineups: fixtureData?.lineups || [],
       consensus,
       markets,
       expert_notes: apiData?.predictions?.advice || "Consensus from AI, experts, and markets.",
@@ -167,7 +209,7 @@ app.post("/predict", async (req, res, next) => {
   }
 });
 
-app.use((err, req, res, next) => {
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   console.error(err.stack);
   res.status(err.status || 500).json({ success: false, error: err.message || "Internal Server Error" });
 });
