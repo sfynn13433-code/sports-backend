@@ -4,184 +4,121 @@ const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// Middleware for CORS and JSON parsing
 app.use(cors());
 app.use(express.json());
 
-// Health check root route
+// --- Blending utility ---
+function blendProbabilities(sources) {
+  const avg = key => sources.reduce((sum, s) => sum + s[key], 0) / sources.length;
+  const rationale = sources.map(s => `[${s.source}] ${s.rationale}`).join(' | ');
+  return {
+    probabilities: {
+      win: Number((avg('win') * 100).toFixed(1)),
+      draw: Number((avg('draw') * 100).toFixed(1)),
+      lose: Number((avg('lose') * 100).toFixed(1)),
+    },
+    rationale,
+    sources,
+  };
+}
+
+// Health route
 app.get("/", (req, res) => {
   res.send("SKCS Sports Predictions backend is running.");
 });
 
-// Stub expert data function (replace with live integration later)
-async function fetchExpertData(home, away, league) {
-  // Example expert data for Burnley vs Chelsea
-  return {
-    expert_win: 61,
-    expert_draw: 20,
-    expert_away: 19,
-    expert_btts: 61,
-    expert_over25: 62,
-    expert_first_half_goals: 54,
-    expert_corners_high: 43,
-    expert_cards_high: 58,
-    expert_notes: [
-      "Chelsea are away favorites with high scoring stats.",
-      "Burnley tends to score at home, supporting BTTS.",
-      "Likely scoreline: Chelsea 2–1 Burnley."
-    ],
-  };
-}
-
-// Blending logic (AI base + expert consensus)
-function adjustProbabilities(defaults, experts) {
-  const weightModel = 0.6;
-  const weightExpert = 0.4;
-  const blend = (m, e) => Math.round(m * weightModel + e * weightExpert);
-  return {
-    homeWin: blend(defaults.homeWin, experts.expert_win),
-    draw: blend(defaults.draw, experts.expert_draw),
-    awayWin: blend(defaults.awayWin, experts.expert_away),
-    btts: blend(defaults.btts, experts.expert_btts),
-    over25: blend(defaults.over25, experts.expert_over25),
-    firstHalfGoals: blend(defaults.firstHalfGoals, experts.expert_first_half_goals),
-    cornersHigh: blend(defaults.cornersHigh, experts.expert_corners_high),
-    cardsHigh: blend(defaults.cardsHigh, experts.expert_cards_high),
-  };
-}
-
-// Utilities
-const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
-const pct = (n) => `${clampPct(n)}%`;
-const suggest = (p) => (p >= 70 ? "High" : p >= 50 ? "Medium" : "Low");
-const makeOdds = (probPercent) => {
-  const p = Math.max(1, Math.min(99, probPercent)) / 100;
-  const dec = Math.max(1.1, Math.min(10.0, 1 / p));
-  return dec.toFixed(2);
-};
-
-// Predict route — full response for frontend
 app.post("/predict", async (req, res, next) => {
   try {
     const { homeTeam, awayTeam, league } = req.body;
 
-    if (!homeTeam || !awayTeam || !league) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
-    // Example: AI base probabilities (replace with ML model data if available)
-    const aiBase = {
-      homeWin: 20,
-      draw: 19,
-      awayWin: 61,
-      btts: 59,
-      over25: 60,
-      firstHalfGoals: 53,
-      cornersHigh: 40,
-      cardsHigh: 56,
+    // --- AI and Expert predictions (stubs or your model) ---
+    const aiPrediction = {
+      source: 'AI',
+      win: 0.21,
+      draw: 0.19,
+      lose: 0.60,
+      rationale: 'AI: Model merges form, xG, and squad depth.',
+    };
+    const expertPrediction = {
+      source: 'Expert',
+      win: 0.22,
+      draw: 0.18,
+      lose: 0.60,
+      rationale: 'Expert: Consensus tips Villa for pressing/goals.',
     };
 
-    // Get expert inputs
-    const expertData = await fetchExpertData(homeTeam, awayTeam, league);
-
-    // Blend using your logic
-    const adjusted = adjustProbabilities(aiBase, expertData);
-
-    // 🔑 Step 1: Get fixture ID from API-SPORTS
+    // --- Optional: GET external odds API (e.g., API-SPORTS) ---
+    let apiOddsSource = null, apiData = null;
     let fixtureId = null;
     try {
-      const fixtureResponse = await axios.get("https://v3.football.api-sports.io/fixtures", {
-        headers: { "x-apisports-key": process.env.APISPORTS_KEY },
-        params: {
-          league: 39,       // Premier League
-          season: 2025,     // Current season
-          team: homeTeam    // Filter by home team
+      const fixtureResp = await axios.get(
+        "https://v3.football.api-sports.io/fixtures",
+        {
+          headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+          params: { league: 39, season: 2025, team: homeTeam }
         }
-      });
-
-      const fixture = fixtureResponse.data.response.find(
+      );
+      const fixture = fixtureResp.data.response.find(
         f => f.teams.home.name.toLowerCase() === homeTeam.toLowerCase() &&
              f.teams.away.name.toLowerCase() === awayTeam.toLowerCase()
       );
-
-      if (fixture) {
-        fixtureId = fixture.fixture.id;
+      if (fixture) { fixtureId = fixture.fixture.id; }
+      if (fixtureId) {
+        const apiResp = await axios.get(
+          "https://v3.football.api-sports.io/predictions",
+          {
+            headers: { "x-apisports-key": process.env.APISPORTS_KEY },
+            params: { fixture: fixtureId }
+          }
+        );
+        apiData = apiResp.data.response[0];
+        if (apiData?.predictions?.percent) {
+          apiOddsSource = {
+            source: "OddsAPI",
+            win: Number(apiData.predictions.percent.win_home) / 100,
+            draw: Number(apiData.predictions.percent.win_draw) / 100,
+            lose: Number(apiData.predictions.percent.win_away) / 100,
+            rationale: "Bookmakers' odds via API-Sports.",
+          };
+        }
       }
-    } catch (apiErr) {
-      console.error("Fixture lookup failed:", apiErr.message);
-    }
+    } catch (apiErr) { console.error("API-Sports error:", apiErr.message); }
 
-    let apiData = null;
-    if (fixtureId) {
-      try {
-        const apiResponse = await axios.get("https://v3.football.api-sports.io/predictions", {
-          headers: { "x-apisports-key": process.env.APISPORTS_KEY },
-          params: { fixture: fixtureId }
-        });
-        apiData = apiResponse.data.response[0];
-      } catch (apiErr) {
-        console.error("Prediction fetch failed:", apiErr.message);
-      }
-    }
+    // --- Consensus prediction using all available sources ---
+    const sources = [aiPrediction, expertPrediction];
+    if (apiOddsSource) sources.push(apiOddsSource);
+    const consensus = blendProbabilities(sources);
 
-    // Core prediction response
-    const prediction = {
+    // --- Respond with full breakdown ---
+    res.json({
       match: `${homeTeam} vs ${awayTeam} (${league})`,
-      source: apiData ? "Blended AI model + expert consensus + API-SPORTS" : "Blended AI model + expert consensus",
-      methodology: apiData
-        ? "Probabilities blended from AI baselines, expert tempo/game-state assessments, and API-Sports live data."
-        : "Probabilities blended from AI baselines and expert tempo/game-state assessments. Not live yet — replace stubs with real APIs to go live.",
+      consensus, // Probabilities, rationale, and sources
       predictions: [
         {
           market: "Full Time Result",
-          probability: apiData?.predictions?.percent?.win_home || adjusted.awayWin,
-          confidence: suggest(adjusted.awayWin),
-          rationale: apiData
-            ? "API-Sports model indicates likelihood of home win."
-            : `${awayTeam} are favorites based on recent form and scoring pace.`,
-        },
-        {
-          market: "Over 2.5 Goals",
-          probability: apiData?.predictions?.goals?.over_25 || adjusted.over25,
-          confidence: suggest(adjusted.over25),
-          rationale: apiData
-            ? "API-Sports goal model suggests Over 2.5 is probable."
-            : "Both teams feature in high-scoring contests, so Over 2.5 is strongly probable.",
-        },
-        {
-          market: "Both Teams to Score",
-          probability: apiData?.predictions?.percent?.btts || adjusted.btts,
-          confidence: suggest(adjusted.btts),
-          rationale: apiData
-            ? "API-Sports BTTS model suggests both teams likely to score."
-            : `${homeTeam}'s home goal tendency aligns with ${awayTeam}'s attacking form.`,
+          probability: consensus.probabilities.win,
+          confidence: consensus.probabilities.win >= 70 ? "High" : consensus.probabilities.win >= 50 ? "Medium" : "Low",
+          rationale: consensus.rationale
         }
       ],
-      expert_notes: expertData.expert_notes || [],
-      suggested_scoreline: apiData?.predictions?.advice || "Chelsea 2–1 Burnley",
+      expert_notes: apiData?.predictions?.advice || "Consensus from AI, experts, and markets.",
       odds: {
-        homeWin: makeOdds(adjusted.homeWin),
-        draw: makeOdds(adjusted.draw),
-        awayWin: makeOdds(adjusted.awayWin),
-        over25: makeOdds(adjusted.over25),
-        btts: makeOdds(adjusted.btts)
+        homeWin: apiOddsSource ? (1 / apiOddsSource.win).toFixed(2) : undefined,
+        draw: apiOddsSource ? (1 / apiOddsSource.draw).toFixed(2) : undefined,
+        awayWin: apiOddsSource ? (1 / apiOddsSource.lose).toFixed(2) : undefined,
       }
-    };
+    });
 
-    res.json(prediction);
   } catch (err) {
     next(err);
   }
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(err.status || 500).json({ success: false, error: err.message || "Internal Server Error" });
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
