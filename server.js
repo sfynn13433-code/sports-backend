@@ -1,7 +1,8 @@
-// server.js — Render backend (Express, CORS, expanded markets, combos, expert rationales, legend, frontend-aligned arrays)
+// server.js — Render backend (Express, CORS, expanded markets, combos, expert rationales, detailed legend, frontend-aligned arrays)
 
 const express = require("express");
 const cors = require("cors");
+// axios included for future live data integrations (currently unused stubs)
 const axios = require("axios");
 
 const app = express();
@@ -50,7 +51,7 @@ async function fetchExpertData(home, away, league) {
     expert_notes: [
       "Pressing intensity suggests open transitions.",
       "Set‑piece threat elevates corner totals.",
-      "Midfield duels increase booking risk."
+      "Midfield duels increase booking risk.",
     ],
   };
 }
@@ -78,7 +79,8 @@ function adjustProbabilities(defaults, experts) {
 /* ------------------------------
    Utilities
 ------------------------------ */
-const pct = (n) => `${Math.max(0, Math.min(100, Math.round(n)))}%`;
+const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
+const pct = (n) => `${clampPct(n)}%`;
 const suggest = (p) => (p >= 70 ? "High" : p >= 50 ? "Medium" : "Low");
 const note = (text) => text;
 
@@ -103,7 +105,9 @@ function deriveTotals(adjusted) {
     5.5: Math.max(14, over25 - 44),
   };
   const over = mapping;
-  const under = Object.fromEntries(Object.entries(over).map(([k, v]) => [k, Math.max(0, 100 - v)]));
+  const under = Object.fromEntries(
+    Object.entries(over).map(([k, v]) => [k, Math.max(0, 100 - v)])
+  );
   return { over, under };
 }
 
@@ -125,7 +129,11 @@ function deriveFirstHalf(adjusted) {
 }
 
 function deriveFulltime(adjusted) {
-  const oneX2 = { home: adjusted.homeWin, draw: adjusted.draw, away: adjusted.awayWin };
+  const oneX2 = {
+    home: adjusted.homeWin,
+    draw: adjusted.draw,
+    away: adjusted.awayWin,
+  };
   const dc = {
     "1X": Math.max(0, Math.min(100, oneX2.home + oneX2.draw)),
     "X2": Math.max(0, Math.min(100, oneX2.draw + oneX2.away)),
@@ -144,8 +152,8 @@ function composeDoubleChanceCombos(dc, totals, btts) {
   // DC + Over/Under
   for (const key of ["1X", "X2", "12"]) {
     for (const l of lines) {
-      const pOver = Math.round((dc[key] * 0.5 + totals.over[l] * 0.5));
-      const pUnder = Math.round((dc[key] * 0.5 + totals.under[l] * 0.5));
+      const pOver = Math.round(dc[key] * 0.5 + totals.over[l] * 0.5);
+      const pUnder = Math.round(dc[key] * 0.5 + totals.under[l] * 0.5);
       combos.push({
         outcome: `Double Chance ${key} + Over ${l}`,
         probability: pct(pOver),
@@ -166,11 +174,11 @@ function composeDoubleChanceCombos(dc, totals, btts) {
   }
 
   // DC + BTTS
-  const pYes = Math.round((btts * 0.6 + 60 * 0.4));
+  const pYes = Math.round(btts * 0.6 + 60 * 0.4);
   const pNo = Math.max(0, 100 - pYes);
   for (const key of ["1X", "X2", "12"]) {
-    const pComboYes = Math.round((dc[key] * 0.5 + pYes * 0.5));
-    const pComboNo = Math.round((dc[key] * 0.5 + pNo * 0.5));
+    const pComboYes = Math.round(dc[key] * 0.5 + pYes * 0.5);
+    const pComboNo = Math.round(dc[key] * 0.5 + pNo * 0.5);
     combos.push({
       outcome: `Double Chance ${key} + BTTS Yes`,
       probability: pct(pComboYes),
@@ -192,9 +200,9 @@ function composeDoubleChanceCombos(dc, totals, btts) {
   // BTTS + Over/Under 2.5 plus “No Team To Score”
   const over25 = totals.over[2.5];
   const under25 = totals.under[2.5];
-  const bttsOver25 = Math.round((btts * 0.55 + over25 * 0.45));
-  const bttsUnder25 = Math.round((btts * 0.45 + under25 * 0.55));
-  const noTeamScore = Math.round((Math.max(0, 100 - btts) * 0.8 + under25 * 0.2));
+  const bttsOver25 = Math.round(btts * 0.55 + over25 * 0.45);
+  const bttsUnder25 = Math.round(btts * 0.45 + under25 * 0.55);
+  const noTeamScore = Math.round(Math.max(0, 100 - btts) * 0.8 + under25 * 0.2);
 
   combos.push({
     outcome: "BTTS Yes + Over 2.5",
@@ -351,13 +359,15 @@ app.post("/predict", async (req, res, next) => {
     const prediction = {
       match: `${homeTeam} vs ${awayTeam} (${league})`,
       source: "Blended AI model + expert consensus",
-      methodology: "Probabilities blended from AI baselines and expert tempo/game‑state assessments. Not live yet — replace stubs with real APIs to go live.",
+      methodology:
+        "Probabilities blended from AI baselines and expert tempo/game‑state assessments. Not live yet — replace stubs with real APIs to go live.",
+      confidence_scale: "High ≥ 70%, Medium 50–69%, Low < 50%.",
 
       all: {
         fulltime_result: [
           { outcome: "Home Win", probability: pct(fulltime.oneX2.home), odds: makeOdds(fulltime.oneX2.home), suggestion: suggest(fulltime.oneX2.home) },
           { outcome: "Draw", probability: pct(fulltime.oneX2.draw), odds: makeOdds(fulltime.oneX2.draw), suggestion: suggest(fulltime.oneX2.draw) },
-          { outcome: "Away Win", probability: pct(fulltime.oneX2.away), odds: makeOdds(fulltime.oneX2.away), suggestion: suggest(fulltime.oneX2.away) }
+          { outcome: "Away Win", probability: pct(fulltime.oneX2.away), odds: makeOdds(fulltime.oneX2.away), suggestion: suggest(fulltime.oneX2.away) },
         ],
         double_chance: {
           "1X": pct(fulltime.dc["1X"]),
@@ -379,7 +389,11 @@ app.post("/predict", async (req, res, next) => {
           "Under 5.5": pct(totals.under[5.5]),
         },
         halftime_markets: {
-          "1H 1X2": { Home: pct(firstHalf.fh1x2.home), Draw: pct(firstHalf.fh1x2.draw), Away: pct(firstHalf.fh1x2.away) },
+          "1H 1X2": {
+            Home: pct(firstHalf.fh1x2.home),
+            Draw: pct(firstHalf.fh1x2.draw),
+            Away: pct(firstHalf.fh1x2.away),
+          },
           "1H Double Chance": {
             "1X": pct(Math.min(100, firstHalf.fh1x2.home + firstHalf.fh1x2.draw)),
             "X2": pct(Math.min(100, firstHalf.fh1x2.draw + firstHalf.fh1x2.away)),
@@ -390,7 +404,10 @@ app.post("/predict", async (req, res, next) => {
             "Under 0.5": pct(firstHalf.under[0.5]),
             "Under 1.5": pct(firstHalf.under[1.5]),
           },
-          "1H BTTS": { Yes: pct(Math.round(adjusted.btts * 0.7)), No: pct(Math.round((100 - adjusted.btts) * 1.1)) },
+          "1H BTTS": {
+            Yes: pct(Math.round(adjusted.btts * 0.7)),
+            No: pct(Math.round((100 - adjusted.btts) * 1.1)),
+          },
         },
         corners: {
           "FT Over 9.5": pct(adjusted.cornersHigh),
@@ -413,8 +430,17 @@ app.post("/predict", async (req, res, next) => {
           "Away +1": "48%",
           "Draw Handicap": "19%",
         },
-        combos: combos.map(c => ({ outcome: c.outcome, probability: c.probability, odds: c.odds, market: c.market, suggestion: c.suggestion })),
-        scorers: ["Likely home striker (~45–50%)", "Away winger (~35–40%)"],
+        combos: combos.map((c) => ({
+          outcome: c.outcome,
+          probability: c.probability,
+          odds: c.odds,
+          market: c.market,
+          suggestion: c.suggestion,
+        })),
+        scorers: [
+          "Likely home striker (~45–50%)",
+          "Away winger (~35–40%)",
+        ],
         halftime_fulltime: "Home/Home (~25–28%)",
       },
 
@@ -431,8 +457,14 @@ app.post("/predict", async (req, res, next) => {
       },
 
       bookings: {
-        halftime: { "Over 1.5": pct(Math.round(adjusted.cardsHigh * 0.92)), "Under 1.5": pct(Math.round(100 - adjusted.cardsHigh * 0.92)) },
-        fulltime: { "Over 3.5": pct(adjusted.cardsHigh), "Under 3.5": pct(100 - adjusted.cardsHigh) },
+        halftime: {
+          "Over 1.5": pct(Math.round(adjusted.cardsHigh * 0.92)),
+          "Under 1.5": pct(Math.round(100 - adjusted.cardsHigh * 0.92)),
+        },
+        fulltime: {
+          "Over 3.5": pct(adjusted.cardsHigh),
+          "Under 3.5": pct(100 - adjusted.cardsHigh),
+        },
         player_cards: ["Player A booked", "Player B sent off"],
       },
 
@@ -449,7 +481,10 @@ app.post("/predict", async (req, res, next) => {
       },
 
       corners_detail: {
-        total: { "Over 9.5": pct(adjusted.cornersHigh), "Under 9.5": pct(100 - adjusted.cornersHigh) },
+        total: {
+          "Over 9.5": pct(adjusted.cornersHigh),
+          "Under 9.5": pct(100 - adjusted.cornersHigh),
+        },
         team: { "Home Over 4.5": "51%", "Away Over 4.5": "47%" },
         handicap: { "Home +2": "55%", "Away +2": "45%" },
       },
@@ -483,19 +518,98 @@ app.post("/predict", async (req, res, next) => {
        Legend for UI explanations
     ------------------------------ */
     const legend = {
-      fulltime_result: "1X2 market: Home Win, Draw, Away Win.",
-      double_chance: "Cover two outcomes: 1X (Home or Draw), X2 (Draw or Away), 12 (Home or Away).",
-      double_chance_btts: "Double Chance combined with Both Teams To Score (Yes/No).",
-      double_chance_goals: "Double Chance combined with Over/Under goals thresholds (1.5–5.5).",
-      btts_goals: "Both Teams To Score combined with Over/Under 2.5.",
-      no_team_to_score: "Special case: neither team scores.",
-      over_under_goals: "Total goals thresholds: 0.5, 1.5, 2.5, 3.5, 4.5, 5.5.",
-      halftime_markets: "First-half markets: 1H 1X2, 1H Double Chance, 1H Over/Under, 1H BTTS.",
-      corners: "Corner markets: FT totals, HT totals, team corners.",
-      cards: "Card markets: HT/FT totals, player bookings.",
-      handicaps: "Asian and European handicap lines.",
+      fulltime_result: {
+        description: "Standard 1X2 market (full time).",
+        outcomes: ["Home Win", "Draw", "Away Win"],
+        example: "Chelsea to win (Away Win).",
+      },
+      double_chance: {
+        description: "Cover two outcomes out of three.",
+        outcomes: ["1X (Home or Draw)", "X2 (Draw or Away)", "12 (Home or Away)"],
+        example: "1X protects against an Away win.",
+      },
+      double_chance_btts: {
+        description: "Double Chance combined with Both Teams To Score.",
+        outcomes: [
+          "1X + BTTS Yes",
+          "1X + BTTS No",
+          "X2 + BTTS Yes",
+          "X2 + BTTS No",
+          "12 + BTTS Yes",
+          "12 + BTTS No",
+        ],
+        example: "X2 + BTTS Yes: Draw or Away, and both teams score.",
+      },
+      double_chance_goals: {
+        description: "Double Chance combined with Over/Under goals.",
+        outcomes: [
+          "1X + Over 1.5/2.5/3.5/4.5/5.5",
+          "1X + Under 1.5/2.5/3.5/4.5/5.5",
+          "X2 + Over 1.5/2.5/3.5/4.5/5.5",
+          "X2 + Under 1.5/2.5/3.5/4.5/5.5",
+          "12 + Over 1.5/2.5/3.5/4.5/5.5",
+          "12 + Under 1.5/2.5/3.5/4.5/5.5",
+        ],
+        example: "12 + Over 2.5: Either team wins and total goals ≥ 3.",
+      },
+      btts_goals: {
+        description: "BTTS (Yes/No) combined with Over/Under 2.5.",
+        outcomes: ["BTTS Yes + Over 2.5", "BTTS Yes + Under 2.5"],
+        example: "BTTS Yes + Over 2.5 implies both score and ≥ 3 goals total.",
+      },
+      no_team_to_score: {
+        description: "Special case: neither team scores.",
+        outcomes: ["No Team To Score"],
+        example: "0–0 full time with low chance quality.",
+      },
+      over_under_goals: {
+        description: "Total goals thresholds across 90 minutes.",
+        outcomes: [
+          "Over/Under 0.5",
+          "Over/Under 1.5",
+          "Over/Under 2.5",
+          "Over/Under 3.5",
+          "Over/Under 4.5",
+          "Over/Under 5.5",
+        ],
+        example: "Over 2.5 means total goals ≥ 3.",
+      },
+      halftime_markets: {
+        description: "First‑half markets only.",
+        outcomes: [
+          "1H 1X2 (Home/Draw/Away)",
+          "1H Double Chance (1X, X2)",
+          "1H Over/Under (0.5, 1.5)",
+          "1H BTTS (Yes/No)",
+        ],
+        example: "1H Over 0.5 implies ≥ 1 goal before half‑time.",
+      },
+      corners: {
+        description: "Corner markets across the match.",
+        outcomes: [
+          "FT Over/Under 9.5",
+          "1H Over/Under 4.5",
+          "Home Over 4.5",
+          "Away Over 4.5",
+        ],
+        example: "FT Over 9.5 expects 10 or more corners total.",
+      },
+      cards: {
+        description: "Card markets (bookings).",
+        outcomes: ["HT Over/Under 1.5", "FT Over/Under 3.5", "Player cards"],
+        example: "FT Over 3.5 expects at least 4 cards.",
+      },
+      handicaps: {
+        description: "Asian and European handicap lines.",
+        outcomes: [
+          "Asian Home -0.5 / Away +0.5",
+          "European Home -1 / Away +1 / Draw Handicap",
+        ],
+        example: "Asian Home -0.5 is equivalent to Home to Win.",
+      },
       confidence_scale: "High ≥ 70%, Medium 50–69%, Low < 50%.",
-      methodology: "Blended AI anchors + expert consensus (not live yet). Replace stubs with real APIs to go live.",
+      methodology:
+        "Blended AI anchors + expert consensus (not live yet). Replace stubs with real APIs to go live.",
     };
 
     /* ------------------------------
