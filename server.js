@@ -1,4 +1,4 @@
-// server.js — Render backend (Express, CORS, expanded markets, combos, expert rationales, frontend-aligned arrays)
+// server.js — Render backend (Express, CORS, expanded markets, combos, expert rationales, legend, frontend-aligned arrays)
 
 const express = require("express");
 const cors = require("cors");
@@ -83,7 +83,7 @@ const suggest = (p) => (p >= 70 ? "High" : p >= 50 ? "Medium" : "Low");
 const note = (text) => text;
 
 function makeOdds(probPercent) {
-  // Simple fractional-to-decimal style: inverse of probability with smoothing caps
+  // Simple inverse probability -> capped decimal odds
   const p = Math.max(1, Math.min(99, probPercent)) / 100;
   const dec = Math.max(1.1, Math.min(10.0, 1 / p));
   return dec.toFixed(2);
@@ -189,7 +189,7 @@ function composeDoubleChanceCombos(dc, totals, btts) {
     });
   }
 
-  // BTTS + Over/Under 2.5 plus “No Team To Score” scenarios
+  // BTTS + Over/Under 2.5 plus “No Team To Score”
   const over25 = totals.over[2.5];
   const under25 = totals.under[2.5];
   const bttsOver25 = Math.round((btts * 0.55 + over25 * 0.45));
@@ -210,7 +210,7 @@ function composeDoubleChanceCombos(dc, totals, btts) {
     odds: makeOdds(bttsUnder25),
     market: "BTTS + goals",
     suggestion: suggest(bttsUnder25),
-    rationale: note("Rare configuration where both score yet totals cap below 3."),
+    rationale: note("Rare scenario where both score yet totals cap below three."),
   });
   combos.push({
     outcome: "No Team To Score",
@@ -218,7 +218,7 @@ function composeDoubleChanceCombos(dc, totals, btts) {
     odds: makeOdds(noTeamScore),
     market: "specials",
     suggestion: suggest(noTeamScore),
-    rationale: note("Requires suppressed creation and finishing; low overall likelihood."),
+    rationale: note("Requires suppressed creation and finishing; lower likelihood."),
   });
 
   return combos;
@@ -480,7 +480,26 @@ app.post("/predict", async (req, res, next) => {
     };
 
     /* ------------------------------
-       Return both: tab arrays + full object
+       Legend for UI explanations
+    ------------------------------ */
+    const legend = {
+      fulltime_result: "1X2 market: Home Win, Draw, Away Win.",
+      double_chance: "Cover two outcomes: 1X (Home or Draw), X2 (Draw or Away), 12 (Home or Away).",
+      double_chance_btts: "Double Chance combined with Both Teams To Score (Yes/No).",
+      double_chance_goals: "Double Chance combined with Over/Under goals thresholds (1.5–5.5).",
+      btts_goals: "Both Teams To Score combined with Over/Under 2.5.",
+      no_team_to_score: "Special case: neither team scores.",
+      over_under_goals: "Total goals thresholds: 0.5, 1.5, 2.5, 3.5, 4.5, 5.5.",
+      halftime_markets: "First-half markets: 1H 1X2, 1H Double Chance, 1H Over/Under, 1H BTTS.",
+      corners: "Corner markets: FT totals, HT totals, team corners.",
+      cards: "Card markets: HT/FT totals, player bookings.",
+      handicaps: "Asian and European handicap lines.",
+      confidence_scale: "High ≥ 70%, Medium 50–69%, Low < 50%.",
+      methodology: "Blended AI anchors + expert consensus (not live yet). Replace stubs with real APIs to go live.",
+    };
+
+    /* ------------------------------
+       Return both: tab arrays + full object + legend
     ------------------------------ */
     res.json({
       ...prediction,
@@ -489,7 +508,9 @@ app.post("/predict", async (req, res, next) => {
       corners,
       cards,
       handicaps,
+      combos, // include full combos array for UI if needed
       expert_notes: expertData.expert_notes || [],
+      legend,
     });
   } catch (err) {
     next(err);
